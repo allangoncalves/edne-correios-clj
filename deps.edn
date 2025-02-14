@@ -1,0 +1,17 @@
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        com.github.seancorfield/next.jdbc {:mvn/version "1.3.994"}
+        org.xerial/sqlite-jdbc {:mvn/version "3.49.0.0"}
+        com.github.seancorfield/honeysql {:mvn/version "2.6.1270"}
+        org.clojure/data.csv {:mvn/version "1.1.0"}}
+ :aliases
+ {:run-m {:main-opts ["-m" "allanvgoncalves.edne-correios"]}
+  :run-x {:ns-default edne-correios-clj.core
+          :exec-fn greet
+          :exec-args {:name "Clojure"}}
+  :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
+          :ns-default build}
+  :test {:extra-paths ["test"]
+         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
+                      io.github.cognitect-labs/test-runner
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}}}
