@@ -1,10 +1,10 @@
-# edne_correios_clj/edne-correios
+# allangoncalves/edne-correios-clj
 
 FIXME: my new application.
 
 ## Installation
 
-Download from https://github.com/allanvgoncalves/edne-correios
+Download from https://github.com/allangoncalves/edne-correios-clj
 
 ## Usage
 
@@ -20,7 +20,7 @@ Run the project, overriding the name to be greeted:
     $ clojure -X:run-x :name '"Someone"'
     Hello, Someone!
 
-Run the project directly, via `:main-opts` (`-m edne_correios_clj.edne-correios`):
+Run the project directly, via `:main-opts` (`-m edne-correios-clj.core`):
 
     $ clojure -M:run-m
     Hello, World!
