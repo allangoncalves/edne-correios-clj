@@ -13,15 +13,23 @@
 
 (def ds (jdbc/get-datasource db-spec))
 
-(defn bulk-insert
-  [table-name values]
-  (jdbc/execute! ds (sql/format {:replace-into table-name
-                                 :values values})))
-
 (defn execute! [q]
-  (jdbc/execute! ds (sql/format (debug q))))
+  (jdbc/execute! ds (sql/format q)))
+
+(defn bulk-insert!
+  [table-name values]
+  (execute! {:replace-into table-name
+             :values values}))
+
+(defn insert!
+  [table-name value]
+  (bulk-insert! table-name [value]))
+
+(defn delete-from
+  [table-name where-filters]
+  (execute! {:delete-from table-name :where where-filters}))
 
 (defn create-table
   [table-name columns]
-  (execute! {:create-table table-name
+  (execute! {:create-table [table-name :if-not-exists]
              :with-columns columns}))

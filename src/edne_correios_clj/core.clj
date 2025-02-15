@@ -7,7 +7,8 @@
 
 (def ^:dynamic *batch-size* 100)
 
-(def dir "./src/data/log")
+(def log-dir "./src/data/log")
+(def delta-dir "./src/data/delta")
 
 (defn with-open-xform [step]
   (fn
@@ -15,7 +16,7 @@
     ([dst] (step dst))
     ([dst x]
      (with-open [y x]
-               (step dst y)))))
+       (step dst y)))))
 
 (defn print-reducer
   ([]
@@ -31,46 +32,81 @@
    (println "Changed records: " sum))
   ([acc el]
    (+ acc
-      (-> el first ::jdbc/update-count))))
+      (-> el first ::jdbc/update-count abs))))
 
-(defn maybe-table-name
-  [file {:keys [file-name-regex table-name]}]
-  (when (re-matches file-name-regex file)
-    table-name))
-
-(defn table-name
-  [file]
-  (reduce (fn [_ el]
-            (when-let [table-name (maybe-table-name file el)]
-              (reduced table-name)))
+(defn find-first
+  [pred-fn coll]
+  (reduce (fn [_ elem]
+            (when (pred-fn elem)
+              (reduced elem)))
           nil
-          db-schemas/all-tables))
+          coll))
 
-(defn table-seed
-  [table-name file-names]
-  (time (transduce (comp
-                    (map (fn [file-name] (io/reader (str dir "/" file-name) :encoding "ISO-8859-1")))
-                    with-open-xform
-                    (mapcat line-seq)
-                    (map #(str/split % #"\@"))
-                    (partition-all *batch-size*)
-                    (map (partial db/bulk-insert table-name)))
-                   sum-reducer
-                   file-names)))
+(defn find-table-name
+  [file]
+  (reduce (fn [_ [k v]]
+            (when (-> v :file-name-regex (re-matches file))
+              (reduced k)))
+          nil
+          db-schemas/tables))
+
+(defn ops-from-file
+  [xform file-paths]
+  (transduce xform
+             sum-reducer
+             file-paths))
+
+(defn delta-op!
+  [table-name row]
+  (let [{:keys [columns]} (get db-schemas/tables table-name)
+        primary-key-column-name (-> columns ffirst)
+        operation (find-first #{"INS" "UPD" "DEL"} row)]
+    (case operation
+      ("INS" "UPD") (db/insert! table-name (->> row
+                                                (remove #{"INS" "UPD" "DEL"})
+                                                (take (count columns))))
+      ("DEL") (db/delete-from table-name [:= primary-key-column-name (first row)]))))
+
+(defn seed
+  [table-name file-paths]
+  (ops-from-file (comp (map (fn [file-path] (io/reader file-path :encoding "ISO-8859-1")))
+                       with-open-xform
+                       (mapcat line-seq)
+                       (map #(str/split % #"\@"))
+                       (partition-all *batch-size*)
+
+                       (map (partial db/bulk-insert! table-name)))
+                 file-paths))
+
+(defn apply-delta-files
+  [table-name file-paths]
+  (ops-from-file (comp (map (fn [file-path] (io/reader file-path :encoding "ISO-8859-1")))
+                       with-open-xform
+                       (mapcat line-seq)
+                       (map #(str/split % #"\@"))
+                       (map (partial delta-op! table-name)))
+                 file-paths))
 
 (comment
 
-  (mapv (fn [{:keys [table-name columns]}]
-          (db/create-table table-name columns))
-        db-schemas/all-tables)
+ (doseq [[table-name {:keys [columns]}] db-schemas/tables]
+   (db/create-table table-name columns))
 
-  (->> (clojure.java.io/file dir)
-       file-seq
-       (map #(.getName %))
-       (group-by table-name)
-       (map (fn [[table-name files]]
-              (when table-name
-                (table-seed table-name files))))))
+ (doseq [[table-name files] (->> (clojure.java.io/file log-dir)
+                                 file-seq
+                                 (map #(.getPath %))
+                                 (group-by find-table-name))
+         :when (some? table-name)]
+   (println table-name)
+   (seed table-name files))
+
+ (doseq [[table-name files] (->> (clojure.java.io/file delta-dir)
+                                 file-seq
+                                 (map #(.getPath %))
+                                 (group-by find-table-name))
+         :when (some? table-name)]
+   (println table-name)
+   (apply-delta-files table-name files)))
 
 
 
