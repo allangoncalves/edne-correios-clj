@@ -32,7 +32,7 @@
               [:loc_tipo_faixa :text]]
     :file-name-regex #".*LOG_FAIXA_LOC.*"}
 
-   :bairros
+   :log_bairro
    {:columns [[:bai_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_nu :integer]
@@ -67,7 +67,7 @@
               [:cpc_final :text]]
     :file-name-regex #".*LOG_FAIXA_CPC.*"}
 
-   :logradouros
+   :log_logradouro
    {:columns [[:log_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_nu :integer]

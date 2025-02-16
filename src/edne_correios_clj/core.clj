@@ -10,13 +10,13 @@
 (def log-dir "./src/data/log")
 (def delta-dir "./src/data/delta")
 
-(defn with-open-xform [step]
+(defn with-open-xform [rf]
   (fn
-    ([] (step))
-    ([dst] (step dst))
-    ([dst x]
-     (with-open [y x]
-       (step dst y)))))
+    ([] (rf))
+    ([result] (rf result))
+    ([result input]
+     (with-open [y input]
+       (rf result y)))))
 
 (defn print-reducer
   ([]
@@ -74,7 +74,6 @@
                        (mapcat line-seq)
                        (map #(str/split % #"\@"))
                        (partition-all *batch-size*)
-
                        (map (partial db/bulk-insert! table-name)))
                  file-paths))
 
@@ -106,7 +105,17 @@
                                  (group-by find-table-name))
          :when (some? table-name)]
    (println table-name)
-   (apply-delta-files table-name files)))
+   (apply-delta-files table-name files))
+
+ (db/create-cep-view)
+
+ #_(let [query "SELECT * FROM ceps"
+       result (jdbc/plan ds [query])]
+   (with-open [writer (io/writer "output.csv")]
+     (csv/write-csv writer
+                    (cons (keys (first result))
+                          (map vals result)))))
+ )
 
 
 
