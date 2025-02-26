@@ -31,3 +31,4 @@
 *.db
 *.iml
 .idea
+output.csv
