@@ -4,9 +4,10 @@
             [edne-correios-clj.db :as db]
             [edne-correios-clj.db-schemas :as db-schemas]
             [clojure.data.csv :as csv]
+            [clj-memory-meter.core :as mm]
             [next.jdbc :as jdbc]))
 
-(def ^:dynamic *seed-batch-size* 100)
+(def ^:dynamic *op-batch-size* 100)
 
 (def log-dir "./src/data/log")
 (def delta-dir "./src/data/delta")
@@ -44,77 +45,65 @@
           nil
           db-schemas/tables))
 
-(defn ops-from-file
-  [xform file-paths]
-  (transduce xform
-             sum-reducer
-             file-paths))
-
 (defn delta-op!
-  [table-name row]
+  [conn table-name [row]]
   (let [{:keys [columns]} (get db-schemas/tables table-name)
         primary-key-column-name (-> columns ffirst)
         operation (find-first #{"INS" "UPD" "DEL"} row)]
     (case operation
-      ("INS" "UPD") (db/insert! table-name (->> row
-                                                (remove #{"INS" "UPD" "DEL"})
-                                                (take (count columns))))
-      ("DEL") (db/delete-from table-name [:= primary-key-column-name (first row)]))))
+      ("INS" "UPD") (db/insert! conn table-name (->> row
+                                                     (remove #{"INS" "UPD" "DEL"})
+                                                     (take (count columns))))
+      ("DEL") (db/delete-from conn table-name [:= primary-key-column-name (first row)]))))
 
-(defn seed
-  [table-name file-paths]
-  (ops-from-file (comp (map (fn [file-path] (io/reader file-path :encoding "ISO-8859-1")))
-                       with-open-xform
-                       (mapcat line-seq)
-                       (map #(str/split % #"\@"))
-                       (map (partial replace {"" nil}))
-                       (partition-all *seed-batch-size*)
-                       (map (partial db/bulk-insert! table-name)))
-                 file-paths))
-
-(defn apply-delta-files
-  [table-name file-paths]
-  (ops-from-file (comp (map (fn [file-path] (io/reader file-path :encoding "ISO-8859-1")))
-                       with-open-xform
-                       (mapcat line-seq)
-                       (map #(str/split % #"\@"))
-                       (map (partial replace {"" nil}))
-                       (map (partial delta-op! table-name)))
-                 file-paths))
-
-(defn -main []
-  (doseq [[table-name {:keys [columns]}] db-schemas/tables]
-    (db/create-table table-name columns))
-
-  (doseq [[table-name files] (->> (clojure.java.io/file log-dir)
+(defn ops-from-files
+  [dir op-fn batch-size]
+  (doseq [[table-name files] (->> (clojure.java.io/file dir)
                                   file-seq
                                   (map #(.getPath %))
                                   (group-by find-table-name))
           :when (some? table-name)]
     (println table-name)
-    (seed table-name files))
+    (transduce (comp (map (fn [file-path] (io/reader file-path :encoding "ISO-8859-1")))
+                     with-open-xform
+                     (mapcat line-seq)
+                     (map #(str/split % #"\@"))
+                     (map (partial replace {"" nil}))
+                     (partition-all batch-size)
+                     (map (partial op-fn table-name)))
+               sum-reducer
+               files)))
 
-  (doseq [[table-name files] (->> (clojure.java.io/file delta-dir)
-                                  file-seq
-                                  (map #(.getPath %))
-                                  (group-by find-table-name))
-          :when (some? table-name)]
-    (println table-name)
-    (apply-delta-files table-name files))
-
-  (db/create-cep-view)
-
+(defn write-ceps-csv
+  [ceps]
   (with-open [writer (io/writer "output.csv")]
     (csv/write-csv writer
                    (cons ["cep" "endereco" "bairro" "cidade" "uf" "uf_nome"]
-                    (db/fetch-ceps)))))
+                         ceps))))
+
+(defn run*
+  [conn]
+  (db/create-tables conn)
+  (ops-from-files log-dir (partial db/bulk-insert! conn) *op-batch-size*)
+  (ops-from-files delta-dir (partial delta-op! conn) 1)
+  (db/create-cep-view conn)
+  (write-ceps-csv (db/fetch-ceps conn)))
+
+(defn run
+  []
+  (with-open [conn (jdbc/get-connection (jdbc/get-datasource {:dbtype "sqlite" :dbname ":memory:"}))]
+    (run* conn)))
+
+(defn -main []
+  (run))
 
 (comment
 
  (require '[clj-memory-meter.core :as mm]
           '[clj-async-profiler.core :as prof])
  #_(mm/measure (-main))
+ (-main)
 
- (prof/profile (-main))
+ (prof/profile {:event :alloc} (-main))
 
- #_(prof/serve-ui 8080))
+ (prof/serve-ui 8080))

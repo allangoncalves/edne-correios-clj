@@ -1,5 +1,6 @@
 (ns edne-correios-clj.db
-  (:require [honey.sql :as sql]
+  (:require [edne-correios-clj.db-schemas :as db-schemas]
+            [honey.sql :as sql]
             [next.jdbc :as jdbc]
             [next.jdbc.plan :as plan]))
 
@@ -8,32 +9,31 @@
   (do (clojure.pprint/pprint el)
       el))
 
-(def db-spec
-  {:dbtype "sqlite"
-   :dbname "example.db"})
-
-(def ds (jdbc/get-datasource db-spec))
-
-(defn execute! [q]
-  (jdbc/execute! ds (sql/format q)))
+(defn execute! [conn q]
+  (jdbc/execute! conn (sql/format q)))
 
 (defn bulk-insert!
-  [table-name values]
-  (execute! {:replace-into table-name
+  [conn table-name values]
+  (execute! conn {:replace-into table-name
              :values values}))
 
 (defn insert!
-  [table-name value]
-  (bulk-insert! table-name [value]))
+  [conn table-name value]
+  (bulk-insert! conn table-name [value]))
 
 (defn delete-from
-  [table-name where-filters]
-  (execute! {:delete-from table-name :where where-filters}))
+  [conn table-name where-filters]
+  (execute! conn {:delete-from table-name :where where-filters}))
 
 (defn create-table
-  [table-name columns]
-  (execute! {:create-table [table-name :if-not-exists]
-             :with-columns columns}))
+  [conn table-name columns]
+  (execute! conn {:create-table [table-name :if-not-exists]
+                  :with-columns columns}))
+
+(defn create-tables
+  [conn]
+  (doseq [[table-name {:keys [columns]}] db-schemas/tables]
+    (create-table conn table-name columns)))
 
 (def cep-view
   "CREATE VIEW ceps AS
@@ -160,13 +160,13 @@ WHERE
     AND log_unid_oper.bai_nu = log_bairro.bai_nu")
 
 (defn create-cep-view
-  []
-  (jdbc/execute! ds [cep-view]))
+  [conn]
+  (jdbc/execute! conn [cep-view]))
 
 (defn fetch-ceps
-  []
+  [conn]
   #_(sql/find-by-keys ds :ceps :all {:order-by [:cep] :offset 0 :limit 10})
-  (plan/select! ds
+  (plan/select! conn
                 (juxt :cep :endereco :bairro :cidade :uf :uf_nome)
                 ["SELECT
                     *,
