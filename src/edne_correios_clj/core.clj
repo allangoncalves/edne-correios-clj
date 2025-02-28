@@ -85,25 +85,27 @@
   [conn]
   (db/create-tables conn)
   (ops-from-files log-dir (partial db/bulk-insert! conn) *op-batch-size*)
-  (ops-from-files delta-dir (partial delta-op! conn) 1)
+  (ops-from-files delta-dir (partial delta-op! conn) 1)     ; Out of safety we're processing delta inputs one by one.
   (db/create-cep-view conn)
-  (write-ceps-csv (db/fetch-ceps conn)))
+  (db/fetch-ceps conn))
 
-(defn run
+(defn build-ceps
   []
   (with-open [conn (jdbc/get-connection (jdbc/get-datasource {:dbtype "sqlite" :dbname ":memory:"}))]
     (run* conn)))
 
 (defn -main []
-  (run))
+  (let [ceps (build-ceps)]
+    (write-ceps-csv ceps)))
 
 (comment
 
  (require '[clj-memory-meter.core :as mm]
           '[clj-async-profiler.core :as prof])
- #_(mm/measure (-main))
- (-main)
 
- (prof/profile {:event :alloc} (-main))
+ (mm/measure (build-ceps))
+ (build-ceps)
+
+ (prof/profile {:event :alloc} (build-ceps))
 
  (prof/serve-ui 8080))
