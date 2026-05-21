@@ -1,16 +1,13 @@
 (ns edne-correios-clj.core
-  (:require [clojure.java.io :as io]
+  (:require [clojure.data.csv :as csv]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [edne-correios-clj.db :as db]
             [edne-correios-clj.db-schemas :as db-schemas]
-            [clojure.data.csv :as csv]
-            [clj-memory-meter.core :as mm]
+            [edne-correios-clj.http :as http]
             [next.jdbc :as jdbc]))
 
-(def ^:dynamic *op-batch-size* 100)
-
-(def log-dir "./src/data/log")
-(def delta-dir "./src/data/delta")
+(def ^:dynamic *op-batch-size* 500)
 
 (defn with-open-xform [rf]
   (fn
@@ -38,12 +35,8 @@
           coll))
 
 (defn find-table-name
-  [file]
-  (reduce (fn [_ [k v]]
-            (when (-> v :file-name-regex (re-matches file))
-              (reduced k)))
-          nil
-          db-schemas/tables))
+  [file-path]
+  (db-schemas/file->table (.getName (io/file file-path))))
 
 (defn delta-op!
   [conn table-name [row]]
@@ -57,55 +50,49 @@
       ("DEL") (db/delete-from conn table-name [:= primary-key-column-name (first row)]))))
 
 (defn ops-from-files
-  [dir op-fn batch-size]
+  [conn dir op-fn batch-size]
   (doseq [[table-name files] (->> (clojure.java.io/file dir)
                                   file-seq
                                   (map #(.getPath %))
                                   (group-by find-table-name))
           :when (some? table-name)]
     (println table-name)
-    (transduce (comp (map (fn [file-path] (io/reader file-path :encoding "ISO-8859-1")))
-                     with-open-xform
-                     (mapcat line-seq)
-                     (map #(str/split % #"\@"))
-                     (map (partial replace {"" nil}))
-                     (partition-all batch-size)
-                     (map (partial op-fn table-name)))
-               sum-reducer
-               files)))
+    (jdbc/with-transaction [tx conn]
+      (transduce (comp (map (fn [file-path] (io/reader file-path :encoding "ISO-8859-1")))
+                       with-open-xform
+                       (mapcat line-seq)
+                       (map #(str/split % #"\@" -1))
+                       (map (partial replace {"" nil}))
+                       (partition-all batch-size)
+                       (map (fn [batch] (op-fn tx table-name batch))))
+                 sum-reducer
+                 files))))
 
-(defn write-ceps-csv
-  [ceps]
-  (with-open [writer (io/writer "output.csv")]
-    (csv/write-csv writer
-                   (cons ["cep" "endereco" "bairro" "cidade" "uf" "uf_nome"]
-                         ceps))))
+(defn write-ceps
+  [conn writer]
+  (csv/write-csv writer [["cep" "endereco" "bairro" "cidade" "uf" "uf_nome" "complemento" "nome"]])
+  (transduce
+   (comp (map (juxt :cep :endereco :bairro :cidade :uf :uf_nome :complemento :nome))
+         (partition-all 10000)
+         (map (partial csv/write-csv writer)))
+   (constantly nil)
+   nil
+   (db/fetch-ceps conn)))
 
-(defn run*
-  [conn]
-  (db/create-tables conn)
-  (ops-from-files log-dir (partial db/bulk-insert! conn) *op-batch-size*)
-  (ops-from-files delta-dir (partial delta-op! conn) 1)     ; Out of safety we're processing delta inputs one by one.
-  (db/create-cep-view conn)
-  (db/fetch-ceps conn))
-
-(defn build-ceps
-  []
-  (with-open [conn (jdbc/get-connection (jdbc/get-datasource {:dbtype "sqlite" :dbname ":memory:"}))]
-    (run* conn)))
+(defn execute
+  [db-name log-dir delta-dir]
+  (with-open [conn (jdbc/get-connection (jdbc/get-datasource {:dbtype "sqlite"
+                                                              :dbname (or db-name ":memory:")}))
+              writer (io/writer "output.csv")]
+    (db/create-tables conn)
+    (ops-from-files conn log-dir db/bulk-insert! *op-batch-size*)
+    (ops-from-files conn delta-dir delta-op! 1)   ; process deltas one by one
+    (write-ceps conn writer)))
 
 (defn -main []
-  (let [ceps (build-ceps)]
-    (write-ceps-csv ceps)))
-
-(comment
-
- (require '[clj-memory-meter.core :as mm]
-          '[clj-async-profiler.core :as prof])
-
- (mm/measure (build-ceps))
- (build-ceps)
-
- (prof/profile {:event :alloc} (build-ceps))
-
- (prof/serve-ui 8080))
+  (let [cache-dir (io/file (System/getProperty "java.io.tmpdir") "edne-correios-clj")
+        log-dir   (io/file cache-dir "log")
+        delta-dir (io/file cache-dir "delta")]
+    (http/download-and-extract! {:log-dir   (.getPath log-dir)
+                                 :delta-dir (.getPath delta-dir)})
+    (execute "example.db" (.getPath log-dir) (.getPath delta-dir))))

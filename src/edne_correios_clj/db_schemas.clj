@@ -1,14 +1,14 @@
 (ns edne-correios-clj.db-schemas)
 
-(def tables
-  {:log_faixa_uf
-   {:columns [[:ufe_sg :text]
-              [:ufe_cep_ini :text]
-              [:ufe_cep_fim :text]]
-    :file-name-regex #".*LOG_FAIXA_UF.*"}
+(def ^:private ufs
+  ["AC" "AL" "AM" "AP" "BA" "CE" "DF" "ES" "GO" "MA" "MG" "MS" "MT"
+   "PA" "PB" "PE" "PI" "PR" "RJ" "RN" "RO" "RR" "RS" "SC" "SE" "SP" "TO"])
 
-   :log_localidade
-   {:columns [[:loc_nu :integer :primary-key]
+(def tables
+  {:log_localidade
+   {:files   ["LOG_LOCALIDADE.TXT"
+              "DELTA_LOG_LOCALIDADE.TXT"]
+    :columns [[:loc_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_no :text]
               [:cep :text]
@@ -16,59 +16,31 @@
               [:loc_in_tipo_loc :text]
               [:loc_nu_sub :integer]
               [:loc_no_abrev :text]
-              [:mun_nu :text]]
-    :file-name-regex #".*LOG_LOCALIDADE.*"}
-
-   :log_var_loc
-   {:columns [[:loc_nu :integer :primary-key]
-              [:val_nu :integer]
-              [:val_tx :text]]
-    :file-name-regex #".*LOG_VAR_LOC.*"}
-
-   :log_faixa_localidade
-   {:columns [[:loc_nu :integer :primary-key]
-              [:loc_cep_ini :text]
-              [:loc_cep_fim :text]
-              [:loc_tipo_faixa :text]]
-    :file-name-regex #".*LOG_FAIXA_LOC.*"}
+              [:mun_nu :text]]}
 
    :log_bairro
-   {:columns [[:bai_nu :integer :primary-key]
+   {:files   ["LOG_BAIRRO.TXT"
+              "DELTA_LOG_BAIRRO.TXT"]
+    :columns [[:bai_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_nu :integer]
               [:bai_no :text]
-              [:bai_no_abrev :text]]
-    :file-name-regex #".*LOG_BAIRRO.*"}
-
-   :log_var_bai
-   {:columns [[:bai_nu :integer :primary-key]
-              [:vdb_nu :integer]
-              [:vdb_tx :text]]
-    :file-name-regex #".*LOG_VAR_BAI.*"}
-
-   :log_faixa_bairro
-   {:columns [[:bai_nu :integer :primary-key]
-              [:fcb_cep_ini :text]
-              [:fcb_cep_fim :text]]
-    :file-name-regex #".*LOG_FAIXA_BAI.*"}
+              [:bai_no_abrev :text]]}
 
    :log_cpc
-   {:columns [[:cpc_nu :integer :primary-key]
+   {:files   ["LOG_CPC.TXT"
+              "DELTA_LOG_CPC.TXT"]
+    :columns [[:cpc_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_nu :integer]
               [:cpc_no :text]
               [:cpc_endereco :text]
-              [:cep :text]]
-    :file-name-regex #".*LOG_CPC.*"}
-
-   :log_faixa_cpc
-   {:columns [[:cpc_nu :integer :primary-key]
-              [:cpc_inicial :text]
-              [:cpc_final :text]]
-    :file-name-regex #".*LOG_FAIXA_CPC.*"}
+              [:cep :text]]}
 
    :log_logradouro
-   {:columns [[:log_nu :integer :primary-key]
+   {:files   (-> (mapv #(str "LOG_LOGRADOURO_" % ".TXT") ufs)
+                 (conj "DELTA_LOG_LOGRADOURO.TXT"))
+    :columns [[:log_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_nu :integer]
               [:bai_nu_ini :integer]
@@ -78,25 +50,12 @@
               [:cep :text]
               [:tlo_tx :text]
               [:log_sta_tlo :text]
-              [:log_no_abrev :text]]
-    :file-name-regex #".*LOG_LOGRADOURO.*"}
-
-   :log_var_log
-   {:columns [[:log_nu :integer :primary-key]
-              [:vlo_nu :integer]
-              [:tlo_tx :text]
-              [:vlo_tx :text]]
-    :file-name-regex #".*LOG_VAR_LOG.*"}
-
-   :log_num_sec
-   {:columns [[:log_nu :integer :primary-key]
-              [:sec_nu_ini :text]
-              [:sec_nu_fim :text]
-              [:sec_in_lado :text]]
-    :file-name-regex #".*LOG_NUM_SEC.*"}
+              [:log_no_abrev :text]]}
 
    :log_grande_usuario
-   {:columns [[:gru_nu :integer :primary-key]
+   {:files   ["LOG_GRANDE_USUARIO.TXT"
+              "DELTA_LOG_GRANDE_USUARIO.TXT"]
+    :columns [[:gru_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_nu :integer]
               [:bai_nu :integer]
@@ -104,11 +63,12 @@
               [:gru_no :text]
               [:gru_endereco :text]
               [:cep :text]
-              [:gru_no_abrev :text]]
-    :file-name-regex #".*LOG_GRANDE_USUARIO.*"}
+              [:gru_no_abrev :text]]}
 
    :log_unid_oper
-   {:columns [[:uop_nu :integer :primary-key]
+   {:files   ["LOG_UNID_OPER.TXT"
+              "DELTA_LOG_UNID_OPER.TXT"]
+    :columns [[:uop_nu :integer :primary-key]
               [:ufe_sg :text]
               [:loc_nu :integer]
               [:bai_nu :integer]
@@ -117,20 +77,10 @@
               [:uop_endereco :text]
               [:cep :text]
               [:uop_in_cp :text]
-              [:uop_no_abrev :text]]
-    :file-name-regex #".*LOG_UNID_OPER.*"}
+              [:uop_no_abrev :text]]}})
 
-   :log_faixa_uop
-   {:columns [[:uop_nu :integer :primary-key]
-              [:fnc_inicial :integer]
-              [:fnc_final :integer]]
-    :file-name-regex #".*LOG_FAIXA_UOP.*"}
-
-   :ect_pais
-   {:columns [[:pai_sg :text]
-              [:pai_sg_alternativa :text]
-              [:pai_no_portugues :text]
-              [:pai_no_ingles :text]
-              [:pai_no_frances :text]
-              [:pai_abreviatura :text]]
-    :file-name-regex #".*ECT_PAIS.*"}})
+(def file->table
+  (into {}
+        (for [[table {:keys [files]}] tables
+              fname files]
+          [fname table])))

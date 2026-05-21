@@ -1,42 +1,49 @@
 (ns edne-correios-clj.db
-  (:require [edne-correios-clj.db-schemas :as db-schemas]
-            [honey.sql :as sql]
+  (:require [clojure.string :as str]
+            [edne-correios-clj.db-schemas :as db-schemas]
             [next.jdbc :as jdbc]
-            [next.jdbc.plan :as plan]))
-
-(defn debug [el]
-  (def el-debug el)
-  (do (clojure.pprint/pprint el)
-      el))
-
-(defn execute! [conn q]
-  (jdbc/execute! conn (sql/format q)))
+            [next.jdbc.result-set :as rs]))
 
 (defn bulk-insert!
   [conn table-name values]
-  (execute! conn {:replace-into table-name
-             :values values}))
+  (let [row-ph (->> (repeat (count (first values)) "?")
+                    (str/join ", ")
+                    (format "(%s)"))
+        sql    (->> (repeat (count values) row-ph)
+                    (str/join ", ")
+                    (str "INSERT OR REPLACE INTO " (name table-name) " VALUES "))]
+    (jdbc/execute! conn (into [sql] cat values))))
 
 (defn insert!
   [conn table-name value]
   (bulk-insert! conn table-name [value]))
 
 (defn delete-from
-  [conn table-name where-filters]
-  (execute! conn {:delete-from table-name :where where-filters}))
+  [conn table-name [_op col value]]
+  (jdbc/execute! conn
+                 [(str "DELETE FROM " (name table-name)
+                       " WHERE " (name col) " = ?")
+                  value]))
 
 (defn create-table
   [conn table-name columns]
-  (execute! conn {:create-table [table-name :if-not-exists]
-                  :with-columns columns}))
+  (let [col-defs (->> columns
+                      (map (fn [[col-name col-type & modifiers]]
+                             (->> modifiers
+                                  (map #(-> % name (str/replace "-" " ")))
+                                  (concat [(name col-name) (name col-type)])
+                                  (str/join " "))))
+                      (str/join ", "))
+        sql (str "CREATE TABLE IF NOT EXISTS " (name table-name) " (" col-defs ")")]
+    (jdbc/execute! conn [sql])))
 
 (defn create-tables
   [conn]
   (doseq [[table-name {:keys [columns]}] db-schemas/tables]
     (create-table conn table-name columns)))
 
-(def cep-view
-  "CREATE VIEW ceps AS
+(def ceps-sql
+  "WITH ceps AS (
 SELECT
     log_logradouro.cep AS cep,
     CONCAT(log_logradouro.tlo_tx, ' ', log_logradouro.log_no) AS endereco,
@@ -157,46 +164,50 @@ FROM
     log_bairro
 WHERE
     log_unid_oper.loc_nu = log_localidade.loc_nu
-    AND log_unid_oper.bai_nu = log_bairro.bai_nu")
-
-(defn create-cep-view
-  [conn]
-  (jdbc/execute! conn [cep-view]))
+    AND log_unid_oper.bai_nu = log_bairro.bai_nu
+)
+SELECT
+    cep,
+    endereco,
+    bairro,
+    cidade,
+    uf,
+    complemento,
+    nome,
+    CASE ceps.uf
+      WHEN 'AC' THEN 'Acre'
+      WHEN 'AL' THEN 'Alagoas'
+      WHEN 'AP' THEN 'Amapá'
+      WHEN 'AM' THEN 'Amazonas'
+      WHEN 'BA' THEN 'Bahia'
+      WHEN 'CE' THEN 'Ceará'
+      WHEN 'DF' THEN 'Distrito Federal'
+      WHEN 'ES' THEN 'Espírito Santo'
+      WHEN 'GO' THEN 'Goiás'
+      WHEN 'MA' THEN 'Maranhão'
+      WHEN 'MT' THEN 'Mato Grosso'
+      WHEN 'MS' THEN 'Mato Grosso do Sul'
+      WHEN 'MG' THEN 'Minas Gerais'
+      WHEN 'PA' THEN 'Pará'
+      WHEN 'PB' THEN 'Paraíba'
+      WHEN 'PR' THEN 'Paraná'
+      WHEN 'PE' THEN 'Pernambuco'
+      WHEN 'PI' THEN 'Piauí'
+      WHEN 'RJ' THEN 'Rio de Janeiro'
+      WHEN 'RN' THEN 'Rio Grande do Norte'
+      WHEN 'RS' THEN 'Rio Grande do Sul'
+      WHEN 'RO' THEN 'Rondônia'
+      WHEN 'RR' THEN 'Rorâima'
+      WHEN 'SC' THEN 'Santa Catarina'
+      WHEN 'SP' THEN 'São Paulo'
+      WHEN 'SE' THEN 'Sergipe'
+      WHEN 'TO' THEN 'Tocantins'
+    END AS uf_nome
+   FROM ceps")
 
 (defn fetch-ceps
   [conn]
-  #_(sql/find-by-keys ds :ceps :all {:order-by [:cep] :offset 0 :limit 10})
-  (plan/select! conn
-                (juxt :cep :endereco :bairro :cidade :uf :uf_nome)
-                ["SELECT
-                    *,
-                    CASE ceps.uf
-                      WHEN 'AC' THEN 'Acre'
-                      WHEN 'AL' THEN 'Alagoas'
-                      WHEN 'AP' THEN 'Amapá'
-                      WHEN 'AM' THEN 'Amazonas'
-                      WHEN 'BA' THEN 'Bahia'
-                      WHEN 'CE' THEN 'Ceará'
-                      WHEN 'DF' THEN 'Distrito Federal'
-                      WHEN 'ES' THEN 'Espírito Santo'
-                      WHEN 'GO' THEN 'Goiás'
-                      WHEN 'MA' THEN 'Maranhão'
-                      WHEN 'MT' THEN 'Mato Grosso'
-                      WHEN 'MS' THEN 'Mato Grosso do Sul'
-                      WHEN 'MG' THEN 'Minas Gerais'
-                      WHEN 'PA' THEN 'Pará'
-                      WHEN 'PB' THEN 'Paraíba'
-                      WHEN 'PR' THEN 'Paraná'
-                      WHEN 'PE' THEN 'Pernambuco'
-                      WHEN 'PI' THEN 'Piauí'
-                      WHEN 'RJ' THEN 'Rio de Janeiro'
-                      WHEN 'RN' THEN 'Rio Grande do Norte'
-                      WHEN 'RS' THEN 'Rio Grande do Sul'
-                      WHEN 'RO' THEN 'Rondônia'
-                      WHEN 'RR' THEN 'Rorâima'
-                      WHEN 'SC' THEN 'Santa Catarina'
-                      WHEN 'SP' THEN 'São Paulo'
-                      WHEN 'SE' THEN 'Sergipe'
-                      WHEN 'TO' THEN 'Tocantins'
-                    END AS uf_nome
-                 FROM ceps"]))
+  (jdbc/plan conn
+             [ceps-sql]
+             {:fetch-size 10000
+              :builder-fn rs/as-unqualified-maps}))
