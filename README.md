@@ -1,78 +1,167 @@
-# allangoncalves/edne-correios-clj
+# edne-correios-clj
 
-FIXME: my new application.
+Um script Clojure simples para construir um banco SQLite de CEPs do Brasil localmente, a partir do [eDNE Básico dos Correios](https://www2.correios.com.br/sistemas/edne/).
 
-## Installation
+## Para que serve
 
-Download from https://github.com/allangoncalves/edne-correios-clj
+Os Correios disponibilizam gratuitamente o **eDNE Básico**, um conjunto de arquivos delimitados com todos os CEPs do país, atualizado quinzenalmente. Este repositório é um exemplo funcional, de pouco código, que:
 
-## Usage
+1. Baixa o zip mais recente do eDNE diretamente do site dos Correios
+2. Descompacta os arquivos `.TXT` de snapshot e delta em memória
+3. Carrega os dados em um SQLite (em memória ou em disco) — esse é o produto principal
 
-FIXME: explanation
+Opcionalmente, com um argumento extra, também exporta um CSV plano com todos os CEPs e seus respectivos logradouros, bairros, cidades e UFs.
 
-Run the project directly, via `:exec-fn`:
+## Para quem é
 
-    $ clojure -X:run-x
-    Hello, Clojure!
+Este repositório **não é uma biblioteca**. Não há `clojars`, `lein install` ou API estável. É um exemplo deliberadamente curto, pensado para que você possa **copiar, colar e adaptar** ao seu projeto:
 
-Run the project, overriding the name to be greeted:
+- Precisa de uma tabela de CEPs em SQLite para uma aplicação local? Copie `db.clj`.
+- Quer transformar os dados em outro formato (Parquet, Postgres, JSON)? O grosso do trabalho é a query `ceps-sql`; reaproveite-a.
+- Precisa rodar atualizações automatizadas? `core/-main` faz fetch + carga + export, ponto.
 
-    $ clojure -X:run-x :name '"Someone"'
-    Hello, Someone!
+Toda a lógica está em **dois namespaces de produção** (`src/edne_correios_clj/core.clj` e `src/edne_correios_clj/db.clj`), com cerca de 350 linhas de código no total.
 
-Run the project directly, via `:main-opts` (`-m edne-correios-clj.core`):
+## Requisitos
 
-    $ clojure -M:run-m
-    Hello, World!
+- [Clojure CLI](https://clojure.org/guides/install_clojure) (testado com 1.12)
+- Java 11+ (usa `java.net.http` da JDK; sem dependências HTTP externas)
 
-Run the project, overriding the name to be greeted:
+## Como usar
 
-    $ clojure -M:run-m Via-Main
-    Hello, Via-Main!
+### Via Clojure CLI (modo "rode e esqueça")
 
-Run the project's tests (they'll fail until you edit them):
+Gera apenas o `./example.db`:
 
-    $ clojure -T:build test
+```bash
+clojure -M -m edne-correios-clj.core
+```
 
-Run the project's CI pipeline and build an uberjar (this will fail until you edit the tests to pass):
+Para também exportar o CSV, passe o caminho como argumento:
 
-    $ clojure -T:build ci
+```bash
+clojure -M -m edne-correios-clj.core output.csv
+```
 
-This will produce an updated `pom.xml` file with synchronized dependencies inside the `META-INF`
-directory inside `target/classes` and the uberjar in `target`. You can update the version (and SCM tag)
-information in generated `pom.xml` by updating `build.clj`.
+Em ambos os casos o script:
 
-If you don't want the `pom.xml` file in your project, you can remove it. The `ci` task will
-still generate a minimal `pom.xml` as part of the `uber` task, unless you remove `version`
-from `build.clj`.
+1. Baixa `eDNE_Basico.zip` (~88 MB) — o conteúdo é descompactado direto da resposta HTTP, o zip nunca toca o disco
+2. Extrai os arquivos `Delimitado/*.TXT` para `$TMPDIR/edne-correios-clj/`
+3. Cria `./example.db` (SQLite com 6 tabelas, ~130 MB)
+4. **Se um caminho de CSV foi passado**, gera o arquivo (~120 MB, ~1,5 milhão de linhas)
 
-Run that uberjar:
+Tempo total: ~30s de pipeline + ~25s de download. Pico de memória: ~450 MB.
 
-    $ java -jar target/net.clojars.edne_correios_clj/edne-correios-0.1.0-SNAPSHOT.jar
+### Via REPL — uso interativo
 
-## Options
+Para usar o script a partir do REPL, abra com o alias `:repl`:
 
-FIXME: listing of options this app accepts.
+```bash
+clojure -M:repl
+```
 
-## Examples
+Esse alias adiciona `dev/` ao classpath, o que carrega automaticamente o `user.clj` com `core`, `db` e `jdbc` já disponíveis. Sem dependências extras.
 
-...
+> Para **mexer no script** (profiling, clojure-lsp), use `clojure -M:dev` — esse alias inclui `clj-async-profiler`, `clj-memory-meter` e `clojure-lsp`.
 
-### Bugs
+Dentro do REPL:
 
-...
+```clojure
+(require '[clojure.java.io :as io]
+         '[edne-correios-clj.core :as core]
+         '[edne-correios-clj.db   :as db]
+         '[next.jdbc :as jdbc])
 
-### Any Other Sections
-### That You Think
-### Might be Useful
+;; Pipeline completo (fetch + carga). Só gera example.db:
+(core/-main)
 
-## License
+;; Pipeline completo + exporta CSV:
+(core/-main "output.csv")
 
-Copyright © 2025 Allan.goncalves
+;; Só a carga, sem baixar — usa diretórios já populados.
+;; Sem 4º argumento, só constrói o DB:
+(core/execute "example.db"
+              "/tmp/edne-correios-clj/log"
+              "/tmp/edne-correios-clj/delta")
 
-_EPLv1.0 is just the default for projects generated by `deps-new`: you are not_
-_required to open source this project, nor are you required to use EPLv1.0!_
-_Feel free to remove or change the `LICENSE` file and remove or update this_
-_section of the `README.md` file!_
+;; Constrói o DB e também exporta o CSV:
+(core/execute "example.db"
+              "/tmp/edne-correios-clj/log"
+              "/tmp/edne-correios-clj/delta"
+              "saida.csv")
 
-Distributed under the Eclipse Public License version 1.0.
+;; SQLite em memória + CSV em disco — útil para "só preciso do CSV, não quero
+;; persistir o DB". Sem CSV o run vira um no-op (DB descartado no fim):
+(core/execute ":memory:"
+              "/tmp/edne-correios-clj/log"
+              "/tmp/edne-correios-clj/delta"
+              "saida.csv")
+
+;; Consultar um example.db já gerado:
+(def conn (jdbc/get-connection
+           (jdbc/get-datasource {:dbtype "sqlite" :dbname "example.db"})))
+
+;; Consultar o DB direto:
+(jdbc/execute! conn ["SELECT cep, ufe_sg, log_no FROM log_logradouro LIMIT 3"])
+;; => [#:log_logradouro{:cep "69918703" :ufe_sg "AC" :log_no "Nelson Mesquita"}
+;;     #:log_logradouro{:cep "69911204" :ufe_sg "AC" :log_no "Tião Natureza"}
+;;     #:log_logradouro{:cep "69901106" :ufe_sg "AC" :log_no "Aquários"}]
+
+;; Gerar o CSV depois, a partir de um example.db já existente —
+;; sem precisar rodar o pipeline outra vez:
+(with-open [conn   (jdbc/get-connection
+                    (jdbc/get-datasource {:dbtype "sqlite" :dbname "example.db"}))
+            writer (io/writer "ceps.csv")]
+  (core/write-ceps conn writer))
+```
+
+Esse último snippet é o "exporte o CSV quando precisar" — a query `ceps-sql` é re-executada contra o `example.db` em disco. Útil quando o banco já existe (de um run anterior ou copiado de outra máquina) e você só quer o CSV plano.
+
+### Customizando
+
+Quase tudo o que você vai querer mexer fica em **`src/edne_correios_clj/db.clj`**:
+
+- **`tables`** — schema das tabelas que serão criadas. Adicione tabelas auxiliares (`log_var_*`, `log_faixa_*`, `ect_pais`, etc.) se precisar — os arquivos já estão dentro do zip baixado.
+- **`ceps-sql`** — a query que materializa o CSV de saída. As sete branches do `UNION` cobrem cada origem possível de CEP (logradouro com/sem tipo, localidade simples, sub-localidade, CPC, grande usuário, unidade operacional).
+
+O `core.clj` fica com a orquestração: download, parsing dos arquivos, transações por tabela, escrita do CSV.
+
+## Testes
+
+```bash
+clojure -M:test
+```
+
+Suíte com 22 testes / 46 asserções, roda em ~2 segundos. Cobre:
+
+- **Schema** — toda tabela tem PK como primeira coluna, sem nomes de arquivo duplicados
+- **Builders SQL** — `bulk-insert!`, `delete-from`, `create-table` contra SQLite em memória
+- **Parser de delta** — `parse-delta-row` lidando com INS / UPD / DEL e operações desconhecidas
+- **Query CEP** — cada branch do `UNION` verificado isoladamente
+- **End-to-end** — fixtures em `test/fixtures/edne-mini/` produzem o CSV golden bit-a-bit idêntico
+
+## Estrutura do código
+
+```
+.
+├── deps.edn                                  # dependências: next.jdbc + sqlite-jdbc + data.csv
+├── src/edne_correios_clj/
+│   ├── core.clj                              # orquestração + HTTP/unzip + pipeline + CSV
+│   └── db.clj                                # schema + SQL builders + query CEP
+├── dev/user.clj                              # helpers de REPL (profiler etc.)
+└── test/
+    ├── edne_correios_clj/*.clj               # 5 arquivos de testes
+    └── fixtures/edne-mini/                   # dados pequenos para o e2e
+```
+
+## Limitações conhecidas
+
+- O **eDNE Básico** não inclui faixas numéricas de logradouros (essas estão só no eDNE Master, pago). Para a maioria dos casos ("qual cidade/bairro responde por este CEP?") o Básico já basta.
+- A query principal usa apenas 6 das tabelas do eDNE. Os arquivos `LOG_VAR_*`, `LOG_FAIXA_*` e `ECT_PAIS` ficam de fora — se quiser usá-los (busca por nomes antigos, validação por faixa de CEP), adicione as entradas correspondentes em `db/tables`.
+- Encoding: o eDNE usa **ISO-8859-1** nos arquivos `.TXT`. O loader respeita isso; o CSV de saída é **UTF-8**.
+
+## Licença
+
+Os dados do eDNE Básico são de propriedade dos Correios e disponibilizados gratuitamente. Este repositório contém apenas código de exemplo, sem dados — você é responsável por aceitar os termos dos Correios ao baixar.
+
+O código deste repositório é distribuído sob a licença Eclipse Public License v1.0.

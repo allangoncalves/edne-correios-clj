@@ -1,0 +1,3 @@
+50000@SP@São Paulo@@1@M@@São Paulo@
+50001@SP@Atibaia@12940000@0@M@@Atibaia@3504503
+50002@SP@Tanque@12940500@2@D@50001@Tanque@3504503

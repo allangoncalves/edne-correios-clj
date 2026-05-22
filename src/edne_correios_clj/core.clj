@@ -29,28 +29,32 @@
    (+ acc
       (-> el first ::jdbc/update-count abs))))
 
-(defn find-first
-  [pred-fn coll]
-  (reduce (fn [_ elem]
-            (when (pred-fn elem)
-              (reduced elem)))
-          nil
-          coll))
-
 (defn find-table-name
   [file-path]
   (db/file->table (.getName (io/file file-path))))
 
-(defn delta-op!
+(defn parse-delta-row
+  "Pure: extract the operation marker and snapshot-shape data from a delta
+   row. The op marker is at fixed position `(count columns)`. Throws on
+   any op that isn't INS/UPD/DEL."
+  [table-name row]
+  (let [{:keys [columns]} (db/tables table-name)
+        n-cols (count columns)
+        op     (nth row n-cols)]
+    (when-not (#{"INS" "UPD" "DEL"} op)
+      (throw (ex-info "Unknown delta operation"
+                      {:op op :table table-name :row row})))
+    {:op     op
+     :data   (vec (take n-cols row))
+     :pk-col (ffirst columns)
+     :pk-val (first row)}))
+
+(defn apply-delta!
   [conn table-name [row]]
-  (let [{:keys [columns]} (get db/tables table-name)
-        primary-key-column-name (-> columns ffirst)
-        operation (find-first #{"INS" "UPD" "DEL"} row)]
-    (case operation
-      ("INS" "UPD") (db/insert! conn table-name (->> row
-                                                     (remove #{"INS" "UPD" "DEL"})
-                                                     (take (count columns))))
-      ("DEL") (db/delete-from conn table-name [:= primary-key-column-name (first row)]))))
+  (let [{:keys [op data pk-col pk-val]} (parse-delta-row table-name row)]
+    (case op
+      ("INS" "UPD") (db/insert! conn table-name data)
+      "DEL"         (db/delete-from conn table-name [:= pk-col pk-val]))))
 
 (defn ops-from-files
   [conn dir op-fn batch-size]
@@ -83,14 +87,19 @@
    (db/fetch-ceps conn)))
 
 (defn execute
-  [db-name log-dir delta-dir]
-  (with-open [conn (jdbc/get-connection (jdbc/get-datasource {:dbtype "sqlite"
-                                                              :dbname (or db-name ":memory:")}))
-              writer (io/writer "output.csv")]
-    (db/create-tables conn)
-    (ops-from-files conn log-dir db/bulk-insert! *op-batch-size*)
-    (ops-from-files conn delta-dir delta-op! 1)   ; process deltas one by one
-    (write-ceps conn writer)))
+  "Build the SQLite DB at `db-name` from the given log/delta directories.
+   Pass a non-nil `csv-out` (a path or a Writer) to also export the CEP CSV."
+  ([db-name log-dir delta-dir]
+   (execute db-name log-dir delta-dir nil))
+  ([db-name log-dir delta-dir csv-out]
+   (with-open [conn (jdbc/get-connection (jdbc/get-datasource {:dbtype "sqlite"
+                                                               :dbname (or db-name ":memory:")}))]
+     (db/create-tables conn)
+     (ops-from-files conn log-dir db/bulk-insert! *op-batch-size*)
+     (ops-from-files conn delta-dir apply-delta! 1)         ; process deltas one by one
+     (when csv-out
+       (with-open [writer (io/writer csv-out)]
+         (write-ceps conn writer))))))
 
 ;;; ============================================================
 ;;; HTTP
@@ -162,10 +171,13 @@
     (clear-dir! delta-d)
     (stream-extract! (.body resp) log-d delta-d)))
 
-(defn -main []
+(defn -main
+  "Build ./example.db from the latest eDNE zip.
+   Pass a CSV path as a CLI arg to also export the flattened CEP CSV."
+  [& [csv-path]]
   (let [cache-dir (io/file (System/getProperty "java.io.tmpdir") "edne-correios-clj")
         log-dir   (io/file cache-dir "log")
         delta-dir (io/file cache-dir "delta")]
     (download-and-extract! {:log-dir   (.getPath log-dir)
                             :delta-dir (.getPath delta-dir)})
-    (execute "example.db" (.getPath log-dir) (.getPath delta-dir))))
+    (execute "example.db" (.getPath log-dir) (.getPath delta-dir) csv-path)))
