@@ -132,14 +132,6 @@ O `core.clj` fica com a orquestração: download, parsing dos arquivos, transaç
 clojure -M:test
 ```
 
-Suíte com 22 testes / 46 asserções, roda em ~2 segundos. Cobre:
-
-- **Schema** — toda tabela tem PK como primeira coluna, sem nomes de arquivo duplicados
-- **Builders SQL** — `bulk-insert!`, `delete-from`, `create-table` contra SQLite em memória
-- **Parser de delta** — `parse-delta-row` lidando com INS / UPD / DEL e operações desconhecidas
-- **Query CEP** — cada branch do `UNION` verificado isoladamente
-- **End-to-end** — fixtures em `test/fixtures/edne-mini/` produzem o CSV golden bit-a-bit idêntico
-
 ## Estrutura do código
 
 ```
