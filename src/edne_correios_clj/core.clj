@@ -34,8 +34,7 @@
   (db/file->table (.getName (io/file file-path))))
 
 (defn parse-delta-row
-  "Pure: extract the operation marker and snapshot-shape data from a delta
-   row. The op marker is at fixed position `(count columns)`. Throws on
+  "The op marker is at fixed position `(count columns)`. Throws on
    any op that isn't INS/UPD/DEL."
   [table-name row]
   (let [{:keys [columns]} (db/tables table-name)
