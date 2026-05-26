@@ -1,6 +1,6 @@
 # edne-correios-clj
 
-Um script Clojure simples para construir um banco SQLite de CEPs do Brasil localmente, a partir do [eDNE Básico dos Correios](https://www2.correios.com.br/sistemas/edne/).
+Um script simples para construir um banco SQLite de CEPs do Brasil localmente, a partir do [eDNE Básico dos Correios](https://www2.correios.com.br/sistemas/edne/).
 
 ## Para que serve
 
@@ -8,49 +8,49 @@ Os Correios disponibilizam gratuitamente o **eDNE Básico**, um conjunto de arqu
 
 1. Baixa o zip mais recente do eDNE diretamente do site dos Correios
 2. Descompacta os arquivos `.TXT` de snapshot e delta em memória
-3. Carrega os dados em um SQLite (em memória ou em disco) — esse é o produto principal
-
-Opcionalmente, com um argumento extra, também exporta um CSV plano com todos os CEPs e seus respectivos logradouros, bairros, cidades e UFs.
+3. Carrega os dados em um SQLite 
+4. (Opcional) gera um arquivo CSV com os dados mais relevantes da base
 
 ## Para quem é
 
-Este repositório **não é uma biblioteca**. Não há `clojars`, `lein install` ou API estável. É um exemplo deliberadamente curto, pensado para que você possa **copiar, colar e adaptar** ao seu projeto:
-
-- Precisa de uma tabela de CEPs em SQLite para uma aplicação local? Copie `db.clj`.
-- Quer transformar os dados em outro formato (Parquet, Postgres, JSON)? O grosso do trabalho é a query `ceps-sql`; reaproveite-a.
-- Precisa rodar atualizações automatizadas? `core/-main` faz fetch + carga + export, ponto.
-
-Toda a lógica está em **dois namespaces de produção** (`src/edne_correios_clj/core.clj` e `src/edne_correios_clj/db.clj`), com cerca de 350 linhas de código no total.
+Este repositório **não é uma biblioteca**. Não há `clojars`, `lein install` ou API estável. É um exemplo deliberadamente curto, pensado para que você possa **copiar, colar e adaptar** ao seu projeto.
 
 ## Requisitos
 
-- [Clojure CLI](https://clojure.org/guides/install_clojure) (testado com 1.12)
+- [Clojure CLI](https://clojure.org/guides/install_clojure)
 - Java 11+ (usa `java.net.http` da JDK; sem dependências HTTP externas)
 
 ## Como usar
 
-### Via Clojure CLI (modo "rode e esqueça")
+### Clojure CLI
 
-Gera apenas o `./example.db`:
-
-```bash
-clojure -M -m edne-correios-clj.core
-```
-
-Para também exportar o CSV, passe o caminho como argumento:
+**Construir o DB** (`seed`):
 
 ```bash
-clojure -M -m edne-correios-clj.core output.csv
+clojure -X:seed
 ```
 
-Em ambos os casos o script:
+Baixa o zip mais recente, descompacta, cria `./example.db` (SQLite com 6 tabelas, ~130 MB).
 
-1. Baixa `eDNE_Basico.zip` (~88 MB) — o conteúdo é descompactado direto da resposta HTTP, o zip nunca toca o disco
-2. Extrai os arquivos `Delimitado/*.TXT` para `$TMPDIR/edne-correios-clj/`
-3. Cria `./example.db` (SQLite com 6 tabelas, ~130 MB)
-4. **Se um caminho de CSV foi passado**, gera o arquivo (~120 MB, ~1,5 milhão de linhas)
+Para customizar o caminho do DB:
 
-Tempo total: ~30s de pipeline + ~25s de download. Pico de memória: ~450 MB.
+```bash
+clojure -X:seed :db-path '"meu-banco.db"'
+```
+
+**Exportar CSV de um DB existente** (`export-csv`):
+
+```bash
+clojure -X:export-csv
+```
+
+Lê `./example.db` e escreve `./output.csv` (~120 MB, ~1,5 milhão de linhas). Não baixa nada nem refaz a carga.
+
+Para customizar:
+
+```bash
+clojure -X:export-csv :db-path '"meu-banco.db"' :csv-path '"meu-csv.csv"'
+```
 
 ### Via REPL — uso interativo
 
@@ -72,30 +72,21 @@ Dentro do REPL:
          '[edne-correios-clj.db   :as db]
          '[next.jdbc :as jdbc])
 
-;; Pipeline completo (fetch + carga). Só gera example.db:
-(core/-main)
+;; Construir o DB (equivalente a `clojure -X:seed`):
+(core/seed {})
+(core/seed {:db-path "meu-banco.db"})
 
-;; Pipeline completo + exporta CSV:
-(core/-main "output.csv")
+;; Exportar o CSV de um DB existente (equivalente a `clojure -X:export-csv`):
+(core/export-csv {})
+(core/export-csv {:csv-path "meu-csv.csv"})
 
-;; Só a carga, sem baixar — usa diretórios já populados.
-;; Sem 4º argumento, só constrói o DB:
-(core/execute "example.db"
-              "/tmp/edne-correios-clj/log"
-              "/tmp/edne-correios-clj/delta")
-
-;; Constrói o DB e também exporta o CSV:
-(core/execute "example.db"
-              "/tmp/edne-correios-clj/log"
-              "/tmp/edne-correios-clj/delta"
-              "saida.csv")
-
-;; SQLite em memória + CSV em disco — útil para "só preciso do CSV, não quero
-;; persistir o DB". Sem CSV o run vira um no-op (DB descartado no fim):
-(core/execute ":memory:"
-              "/tmp/edne-correios-clj/log"
-              "/tmp/edne-correios-clj/delta"
-              "saida.csv")
+;; Só a carga, sem baixar — usando diretórios já populados.
+;; Aqui o chamador é dono da connection, então dá pra compor:
+(with-open [conn (jdbc/get-connection
+                  (jdbc/get-datasource {:dbtype "sqlite" :dbname "example.db"}))]
+  (core/execute conn
+                "/tmp/edne-correios-clj/log"
+                "/tmp/edne-correios-clj/delta"))
 
 ;; Consultar um example.db já gerado:
 (def conn (jdbc/get-connection
@@ -106,16 +97,7 @@ Dentro do REPL:
 ;; => [#:log_logradouro{:cep "69918703" :ufe_sg "AC" :log_no "Nelson Mesquita"}
 ;;     #:log_logradouro{:cep "69911204" :ufe_sg "AC" :log_no "Tião Natureza"}
 ;;     #:log_logradouro{:cep "69901106" :ufe_sg "AC" :log_no "Aquários"}]
-
-;; Gerar o CSV depois, a partir de um example.db já existente —
-;; sem precisar rodar o pipeline outra vez:
-(with-open [conn   (jdbc/get-connection
-                    (jdbc/get-datasource {:dbtype "sqlite" :dbname "example.db"}))
-            writer (io/writer "ceps.csv")]
-  (core/write-ceps conn writer))
 ```
-
-Esse último snippet é o "exporte o CSV quando precisar" — a query `ceps-sql` é re-executada contra o `example.db` em disco. Útil quando o banco já existe (de um run anterior ou copiado de outra máquina) e você só quer o CSV plano.
 
 ### Customizando
 
@@ -154,6 +136,8 @@ clojure -M:test
 
 ## Licença
 
-Os dados do eDNE Básico são de propriedade dos Correios e disponibilizados gratuitamente. Este repositório contém apenas código de exemplo, sem dados — você é responsável por aceitar os termos dos Correios ao baixar.
+Copyright © 2025-2026 Allan Gonçalves
 
-O código deste repositório é distribuído sob a licença Eclipse Public License v1.0.
+Distribuído sob a [licença MIT](https://opensource.org/licenses/MIT).
+
+Os dados do eDNE Básico são propriedade dos Correios e disponibilizados gratuitamente. Este repositório contém apenas código de exemplo, sem dados — você é responsável por aceitar os termos dos Correios ao baixar.

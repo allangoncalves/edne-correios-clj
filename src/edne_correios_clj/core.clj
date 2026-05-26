@@ -87,19 +87,12 @@
    (db/fetch-ceps conn)))
 
 (defn execute
-  "Build the SQLite DB at `db-name` from the given log/delta directories.
-   Pass a non-nil `csv-out` (a path or a Writer) to also export the CEP CSV."
-  ([db-name log-dir delta-dir]
-   (execute db-name log-dir delta-dir nil))
-  ([db-name log-dir delta-dir csv-out]
-   (with-open [conn (jdbc/get-connection (jdbc/get-datasource {:dbtype "sqlite"
-                                                               :dbname (or db-name ":memory:")}))]
-     (db/create-tables conn)
-     (ops-from-files conn log-dir db/bulk-insert! *op-batch-size*)
-     (ops-from-files conn delta-dir apply-delta! 1)         ; process deltas one by one
-     (when csv-out
-       (with-open [writer (io/writer csv-out)]
-         (write-ceps conn writer))))))
+  "Load the eDNE log/delta directories into the given SQLite connection.
+   Caller owns the connection lifecycle."
+  [conn log-dir delta-dir]
+  (db/create-tables conn)
+  (ops-from-files conn log-dir db/bulk-insert! *op-batch-size*)
+  (ops-from-files conn delta-dir apply-delta! 1))          ; process deltas one by one
 
 ;;; ============================================================
 ;;; HTTP
@@ -171,13 +164,25 @@
     (clear-dir! delta-d)
     (stream-extract! (.body resp) log-d delta-d)))
 
-(defn -main
-  "Build ./example.db from the latest eDNE zip.
-   Pass a CSV path as a CLI arg to also export the flattened CEP CSV."
-  [& [csv-path]]
+(defn seed
+  "Build the SQLite DB from the latest eDNE zip.
+   Default DB path is ./example.db; override via :db-path."
+  [{:keys [db-path] :or {db-path "example.db"}}]
   (let [cache-dir (io/file (System/getProperty "java.io.tmpdir") "edne-correios-clj")
         log-dir   (io/file cache-dir "log")
         delta-dir (io/file cache-dir "delta")]
     (download-and-extract! {:log-dir   (.getPath log-dir)
                             :delta-dir (.getPath delta-dir)})
-    (execute "example.db" (.getPath log-dir) (.getPath delta-dir) csv-path)))
+    (with-open [conn (jdbc/get-connection
+                       (jdbc/get-datasource {:dbtype "sqlite" :dbname db-path}))]
+      (execute conn (.getPath log-dir) (.getPath delta-dir)))))
+
+(defn export-csv
+  "Read a SQLite DB and write the flattened CEP CSV.
+   Defaults: :db-path 'example.db', :csv-path 'output.csv'."
+  [{:keys [db-path csv-path]
+    :or   {db-path "example.db" csv-path "output.csv"}}]
+  (with-open [conn   (jdbc/get-connection
+                       (jdbc/get-datasource {:dbtype "sqlite" :dbname db-path}))
+              writer (io/writer csv-path)]
+    (write-ceps conn writer)))

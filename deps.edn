@@ -4,7 +4,9 @@
         org.xerial/sqlite-jdbc {:mvn/version "3.49.0.0"}
         org.clojure/data.csv {:mvn/version "1.1.0"}}
  :aliases
- {:repl {:extra-paths ["dev"]}
+ {:seed       {:exec-fn edne-correios-clj.core/seed}            ; gera ./example.db a partir do eDNE
+  :export-csv {:exec-fn edne-correios-clj.core/export-csv}      ; lê ./example.db e gera ./output.csv
+  :repl       {:extra-paths ["dev"]}
   :dev {:extra-paths ["dev"]
         :extra-deps {com.clojure-goes-fast/clj-memory-meter {:mvn/version "0.4.0"}
                      com.clojure-goes-fast/clj-async-profiler {:mvn/version "1.6.1"}
